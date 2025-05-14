@@ -117,43 +117,86 @@ int encrypt_file_aes(const char *inpath,
 }
 
 int create_tar_gz(const char *srcdir, const char *outpath) {
-    struct archive *a = archive_write_new();
+    struct archive *a;
+    struct archive *disk;
+    DIR *dir;
+    struct dirent *de;
+    char fullpath[1024];
+    char archive_path[1024];
+    struct stat st;
+    struct archive_entry *entry;
+    FILE *f;
+    unsigned char buff[8192];
+    int r;
+    
+    struct {
+        char path[1024];
+        char archive_prefix[1024];
+        DIR *dir;
+    } stack[100];
+    int stack_pos = 0;
+    
+    a = archive_write_new();
     archive_write_set_format_pax_restricted(a);
     archive_write_add_filter_gzip(a);
     archive_write_open_filename(a, outpath);
-
-    struct archive *disk = archive_read_disk_new();
+    
+    disk = archive_read_disk_new();
     archive_read_disk_set_standard_lookup(disk);
-
-    DIR *dir = opendir(srcdir);
-    if (!dir) return -1;
-
-    struct dirent *de;
-    while ((de = readdir(dir))) {
-        if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
-        char fullpath[1024];
-        snprintf(fullpath, sizeof(fullpath), "%s/%s", srcdir, de->d_name);
-
-        struct stat st;
-        stat(fullpath, &st);
-
-        struct archive_entry *entry = archive_entry_new();
-        archive_entry_set_pathname(entry, de->d_name);
+    
+    strcpy(stack[0].path, srcdir);
+    stack[0].archive_prefix[0] = '\0';
+    stack[0].dir = opendir(srcdir);
+    
+    while (stack_pos >= 0) {
+        dir = stack[stack_pos].dir;
+        de = readdir(dir);
+        if (!de) {
+            closedir(dir);
+            stack_pos--;
+            continue;
+        }
+        
+        if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, ".."))
+            continue;
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", 
+                 stack[stack_pos].path, de->d_name);
+        if (stack[stack_pos].archive_prefix[0] != '\0') {
+            snprintf(archive_path, sizeof(archive_path), "%s/%s", 
+                     stack[stack_pos].archive_prefix, de->d_name);
+        } else {
+            strncpy(archive_path, de->d_name, sizeof(archive_path) - 1);
+            archive_path[sizeof(archive_path) - 1] = '\0'; 
+        }
+        if (stat(fullpath, &st) != 0)
+            continue;
+        
+        entry = archive_entry_new();
+        archive_entry_set_pathname(entry, archive_path);
         archive_entry_copy_stat(entry, &st);
         archive_write_header(a, entry);
-
+        
         if (S_ISREG(st.st_mode)) {
-            FILE *f = fopen(fullpath, "rb");
-            unsigned char buff[8192];
-            int r;
-            while ((r = fread(buff, 1, sizeof(buff), f)) > 0)
-                archive_write_data(a, buff, r);
-            fclose(f);
+            f = fopen(fullpath, "rb");
+            if (f) {
+                while ((r = fread(buff, 1, sizeof(buff), f)) > 0)
+                    archive_write_data(a, buff, r);
+                fclose(f);
+            }
+        } else if (S_ISDIR(st.st_mode)) {
+            if (stack_pos < 99) {
+                stack_pos++;
+                strcpy(stack[stack_pos].path, fullpath);
+                strcpy(stack[stack_pos].archive_prefix, archive_path);
+                stack[stack_pos].dir = opendir(fullpath);
+                if (!stack[stack_pos].dir)
+                    stack_pos--;
+            }
         }
+        
         archive_entry_free(entry);
     }
-
-    closedir(dir);
+    
     archive_read_free(disk);
     archive_write_close(a);
     archive_write_free(a);
@@ -242,6 +285,7 @@ int main(int argc, char *argv[]) {
         folder_name++;
     else
         folder_name = mod_path;
+
     snprintf(outpath, sizeof(outpath), "%s.bmod", folder_name);
     FILE *out = fopen(outpath, "wb");
 
