@@ -237,8 +237,12 @@ int main(int argc, char *argv[]) {
     EVP_PKEY_free(pkey);
 
     char outpath[1024];
-    snprintf(outpath, sizeof(outpath), "%s.bmod",
-             strrchr(mod_path, '/') + 1);
+    const char *folder_name = strrchr(mod_path, '/');
+    if (folder_name)
+        folder_name++;
+    else
+        folder_name = mod_path;
+    snprintf(outpath, sizeof(outpath), "%s.bmod", folder_name);
     FILE *out = fopen(outpath, "wb");
 
     fwrite("BMOD", 1, 4, out);
