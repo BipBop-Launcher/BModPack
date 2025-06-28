@@ -15,6 +15,7 @@ jobs:
       - name: Create or update Release
         id: release
         uses: actions/create-release@v1
+        continue-on-error: true
         with:
           tag_name: main
           release_name: BModPack Release
